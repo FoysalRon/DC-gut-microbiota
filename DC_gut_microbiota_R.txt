@@ -1,0 +1,368 @@
+getwd()
+setwd()
+library("microbiomeSeq")
+library("phyloseq")
+library("ggplot2")
+library("ggtree")
+library("microbiome")
+library("hrbrthemes")
+library("gcookbook")
+library("tidyverse")
+library("dplyr")
+library("coin")
+library("VennDiagram")
+library("UpSetR")
+library("patchwork")
+library("RColorBrewer")
+library("VennDiagram")
+library("ggpattern")
+library("ggpubr")
+library("Matrix")
+library("reshape2")
+library("vegan")
+library("cowplot")
+
+#Colour
+display.brewer.all(colorblindFriendly = T)
+nb.cols <- 20
+mycolors <- colorRampPalette(brewer.pal(10, "Paired"))(nb.cols)
+#Colour
+n <- 60
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+pie(rep(1,n), col=sample(col_vector, n))
+family_colors <- col_vector
+color = grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)]
+genus_colors <- color
+g_col <- c ("yellow2", "#ffa600", "#C74B1D", "#7C020F", "#f95d6a", "#d45087", "#a05195", "#665191", "#75DAFF", "#60A3F6", "#2f4b7c",  "#AEC248", "#33A02C",  "#2F8006", "#3C5E30", "gold", "grey90", "goldenrod4", "coral4", "#666666", "#E31A1C", "#FDBF6F", "#FF7F00", "#CAB2D6", "#6A3D9A", "#FFFF99", "#B15928", "#FBB4AE", "#B3CDE3", "#CCEBC5", "#DECBE4", "#FED9A6", "#FFFFCC", "#E5D8BD", "#FDDAEC", "#F2F2F2", "#B3E2CD", "#FDCDAC", "#CBD5E8", "#F4CAE4", "#E6F5C9", "#FFF2AE", "#F1E2CC", "#CCCCCC", "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+#Load data
+otumat<-read.csv("otutableDC2.csv", header=TRUE, row.names=1)
+taxmat<-read.csv("taxaDC2.csv", header=TRUE, row.names=1)
+metadata<-read.csv("metadataDC.csv", header=TRUE, row.names=1)
+setdiff(rownames(otumat),taxmat$Genus)
+rownames(taxmat) <- taxmat$Genus
+taxmat =  as.matrix(taxmat)
+OTU = otu_table(otumat, taxa_are_rows = TRUE)
+TAX = tax_table(taxmat)
+sampledata = sample_data(metadata)
+physeq1 = phyloseq(OTU, TAX, sampledata)
+physeq1
+
+library(MicrobiotaProcess)
+#Rarefy the data
+psraw <- prune_samples(sample_sums(physeq1)>=sort(rowSums(otu_table(physeq1)))[3], physeq1)
+set.seed(1024)
+ps <- rarefy_even_depth(psraw)
+ps
+
+#Stat-compare-means (add p-value)
+a_my_comparisons <- list( c("V1V3", "V3V4"), c("V3V4", "V4V5"), c("V1V3", "V4V5"))
+symnum.args = list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns"))
+
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "group", measures=c("Shannon")))
+p2 <- p + geom_boxplot(data = p$data, aes(x = group, y = value, fill = group), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_point(colour="white", shape=21, size = NA, aes(fill = factor(group))) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "gold3", "steelblue3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white")) + stat_compare_means(method = "wilcox.test", comparisons = a_my_comparisons, label = "p.signif", symnum.args = symnum.args)
+p2$layers <- p2$layers[-1]
+p2
+
+#Arrange group and transform dataset for beta-diversity
+sample_data(ps)$group <- factor((sample_data(ps)$group), levels=c("V3V4", "V4V5", "V1V3"))
+relab_genera = transform_sample_counts(ps, function(x) x / sum(x) * 100) 
+head(otu_table(relab_genera)[,1:6])
+abrel_bray <- phyloseq::distance(relab_genera, method = "bray")
+abrel_bray <- as.matrix(abrel_bray)
+head(abrel_bray)[,1:6]
+sub_dist <- list()
+groups_all <- sample_data(relab_genera)$group
+head(groups_all)
+for (group in levels(groups_all)) { 
+  row_group <- which(groups_all == group)
+  sample_group <- sample_names(relab_genera)[row_group]
+  sub_dist[[group]] <- abrel_bray[ sample_group, sample_group]
+  sub_dist[[group]][!lower.tri(sub_dist[[group]])] <- NA
+}
+braygroups<- melt(sub_dist)
+df.bray <- braygroups[complete.cases(braygroups), ]
+df.bray$L1 <- factor(df.bray$L1, levels=names(sub_dist))
+head(df.bray)
+
+#Plot Bray-Curtis diversity
+p3 <- ggplot(df.bray, aes(x=L1, y=value, colour=L1)) +
+  geom_jitter() + 
+  geom_boxplot(alpha=0.6) +  
+  theme(legend.position="none") +
+  ylab("Bray-Curtis diversity") +
+  theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("#FD9347", "#00AED7", "steelblue4")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white")) + stat_compare_means(method = "wilcox.test", comparisons = a_my_comparisons, label = "p.signif", symnum.args = symnum.args)
+
+#Plot Beta-ordination
+ord = ordinate(relab_genera, method="PCoA", distance = "bray")
+p4 <- plot_ordination(relab_genera, ord, color = "group", shape="water") + 
+  geom_point(size=4, alpha = 0.9) + 
+  stat_ellipse(aes(group=group)) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_color_manual(values = c("firebrick", "gold3", "royalblue3")) + scale_shape_manual(values=c(19, 15)) + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+p4
+
+#Anodis test
+samples <- data.frame(sample_data(relab_genera))
+adonis2(abrel_bray ~ group, data = samples)
+
+#Arrange plots in cowplot
+plot_grid(p2, p4,
+          labels = c('A', 'B'), rel_widths = c(1, 2))
+
+#Save plot
+ggsave("alpha_beta_hyper_region_dc.tiff", units = c("in"), width=9, height=7, dpi=300, compression="lzw")
+
+#Microbial communities
+#Top abundant species
+# Merges ASVs that have the same taxonomy rank (Genus)
+gp = tax_glom(ps, taxrank = "Genus")
+# Calculate relative abundance
+rb = transform_sample_counts(gp, function(x) {x/sum(x)} )
+top20 = names(head(sort(rowSums(otu_table(rb)), decreasing = TRUE), 20))
+top20
+rb = prune_taxa(top20, rb)
+rb
+rb %>% psmelt() %>% head(20)
+rb2 = psmelt(rb)
+rb2
+dat.agr = aggregate(Abundance~water+Genus, data=rb2, FUN=mean)
+gp1 <- ggplot(dat.agr, aes(x = water, y = Abundance, fill = Genus)) +
+  theme_bw() +
+  theme(strip.background = element_rect(fill="white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.spacing =
+          unit(0.1, "lines")) +
+  theme(strip.text = element_text(colour = 'black'), axis.text.x = element_text(angle = 45, hjust = 1, size=12, face="bold", colour="black"), axis.text.y =
+          element_text(hjust = 1, size=12), axis.title.x = element_text(angle = 0, hjust = 0.5, vjust=0.5, size=12, face="bold", margin = margin(t = 6, r = 4, b = 0, l = 0)), axis.title.y = element_text(angle = 90, hjust = 0.4, size=12, face="bold", margin = margin(t = 0, r = 6, b = 0, l = 0)), plot.title
+        =element_text(angle = 0, hjust = 0, size=10, face="bold", margin = margin(t = 0, r = 0, b = 8, l = 0)) ) +
+  geom_bar(stat = "identity", position="fill", colour = "black") +
+  scale_fill_manual(values = g_col) +
+  theme(legend.text=element_text(size=12, face = "italic"), legend.title = element_text(size=12, face="bold")) + 
+  scale_y_continuous(label = scales::percent) +
+  ylab("Relative Abundance") + theme(axis.title.x=element_blank()) + ggtitle ("Host habitat")
+gp1
+
+#Top abundant species
+# Merges ASVs that have the same taxonomy rank (Genus)
+gp = tax_glom(ps, taxrank = "Genus")
+# Calculate relative abundance
+rb = transform_sample_counts(gp, function(x) {x/sum(x)} )
+top20 = names(head(sort(rowSums(otu_table(rb)), decreasing = TRUE), 20))
+top20
+rb = prune_taxa(top20, rb)
+rb
+rb %>% psmelt() %>% head(20)
+rb2 = psmelt(rb)
+rb2
+dat.agr = aggregate(Abundance~crustacean+Genus, data=rb2, FUN=mean)
+gp2 <- ggplot(dat.agr, aes(x = crustacean, y = Abundance, fill = Genus)) +
+  theme_bw() +
+  theme(strip.background = element_rect(fill="white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.spacing =
+          unit(0.1, "lines")) +
+  theme(strip.text = element_text(colour = 'black'), axis.text.x = element_text(angle = 45, hjust = 1, size=12, face="bold", colour="black"), axis.text.y =
+          element_text(hjust = 1, size=12), axis.title.x = element_text(angle = 0, hjust = 0.5, vjust=0.5, size=12, face="bold", margin = margin(t = 6, r = 4, b = 0, l = 0)), axis.title.y = element_text(angle = 90, hjust = 0.4, size=12, face="bold", margin = margin(t = 0, r = 6, b = 0, l = 0)), plot.title
+        =element_text(angle = 0, hjust = 0, size=10, face="bold", margin = margin(t = 0, r = 0, b = 8, l = 0)) ) +
+  geom_bar(stat = "identity", position="fill", colour = "black") +
+  scale_fill_manual(values = g_col) +
+  theme(legend.text=element_text(size=12, face = "italic"), legend.title = element_text(size=12, face="bold")) + 
+  scale_y_continuous(label = scales::percent) +
+  ylab("Relative Abundance") + theme(axis.title.x=element_blank()) + ggtitle ("Crustacean group")
+gp2
+
+
+#Top abundant species
+# Merges ASVs that have the same taxonomy rank (Genus)
+gp = tax_glom(ps, taxrank = "Genus")
+# Calculate relative abundance
+rb = transform_sample_counts(gp, function(x) {x/sum(x)} )
+top20 = names(head(sort(rowSums(otu_table(rb)), decreasing = TRUE), 20))
+top20
+rb = prune_taxa(top20, rb)
+rb
+rb %>% psmelt() %>% head(20)
+rb2 = psmelt(rb)
+rb2
+dat.agr = aggregate(Abundance~species+Genus, data=rb2, FUN=mean)
+gp3 <- ggplot(dat.agr, aes(x = species, y = Abundance, fill = Genus)) +
+  theme_bw() +
+  theme(strip.background = element_rect(fill="white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.spacing =
+          unit(0.1, "lines")) +
+  theme(strip.text = element_text(colour = 'black'), axis.text.x = element_text(angle = 45, hjust = 1, size=12, face="bold", colour="black"), axis.text.y =
+          element_text(hjust = 1, size=12), axis.title.x = element_text(angle = 0, hjust = 0.5, vjust=0.5, size=12, face="bold", margin = margin(t = 6, r = 4, b = 0, l = 0)), axis.title.y = element_text(angle = 90, hjust = 0.4, size=12, face="bold", margin = margin(t = 0, r = 6, b = 0, l = 0)), plot.title
+        =element_text(angle = 0, hjust = 0, size=10, face="bold", margin = margin(t = 0, r = 0, b = 8, l = 0)) ) +
+  geom_bar(stat = "identity", position="fill", colour = "black") +
+  scale_fill_manual(values = g_col) +
+  theme(legend.text=element_text(size=12, face = "italic"), legend.title = element_text(size=12, face="bold")) + 
+  scale_y_continuous(label = scales::percent) +
+  ylab("Relative Abundance") + theme(axis.title.x=element_blank()) + ggtitle ("DC species")
+gp3
+
+gp1 <- gp1 + theme(legend.key.size = unit(1.2, 'lines'))
+gp2 <- gp2 + theme(legend.key.size = unit(1.2, 'lines'))
+gp3 <- gp3 + theme(legend.key.size = unit(1.0, 'lines'))
+gp3
+plot_grid(gp1, gp2, labels = c('A', 'B'), nrow = 1, rel_widths = c(1.5, 2.0))
+#Save plot
+ggsave("microbial_com_dc_fig2_2.tiff", units = c("in"), width=7.5, height=6.5, dpi=300, compression="lzw")
+
+top_row <- plot_grid(gp1, gp2, labels = c('A', 'B'), align = 'h', rel_widths = c(1.8, 2.0))
+plot_grid(top_row, gp3, labels = c('', 'C'), ncol = 1, rel_heights = c(1.2, 1.3), rel_widths = c(2.0, 1.5))
+
+####Alpha-diversity analysis
+#Load data
+OTU<-read.csv("otutableDC.csv", header=TRUE, row.names=1)
+TAX<-read.csv("taxaDC.csv", header=TRUE, row.names=1)
+META<-read.csv("metadataDC.csv", header=TRUE, row.names=1)
+class(OTU)
+class(TAX)
+OTU_data=otu_table(as.matrix(OTU), taxa_are_rows=TRUE)
+TAX_data=tax_table(as.matrix(TAX))
+META_data=sample_data(META)
+physeq<-merge_phyloseq(phyloseq(OTU_data, TAX_data), META_data)
+physeq<-t(physeq)
+
+#Rarefy the data
+library(MicrobiotaProcess)
+psraw <- prune_samples(sample_sums(physeq)>=sort(rowSums(otu_table(physeq)))[3], physeq)
+set.seed(1024)
+ps <- rarefy_even_depth(psraw)
+ps
+
+#Rare-curve
+set.seed(1024)
+rareres <- get_rarecurve(obj=ps, chunks=400)
+prare2 <- ggrarecurve(obj=rareres,
+                      factorNames="water",
+                      shadow=FALSE,
+                      indexNames=c("Observe", "Chao1", "ACE")
+) +
+  scale_color_manual(values=c("firebrick", "gold3"))+
+  theme_bw()+
+  theme(axis.text=element_text(size=8), panel.grid=element_blank(),
+        strip.background = element_rect(colour=NA,fill="grey"),
+        strip.text.x = element_text(face="bold"))
+prare2
+
+#Save plot
+ggsave("rare_curve_dc.tiff", units = c("in"), width=12, height=8, dpi=300, compression="lzw")
+
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "water", measures=c("Observed")))
+p5 <- p + geom_boxplot(data = p$data, aes(x = water, y = value, fill = water), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = water), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white")) + stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, label = "p.signif", symnum.args = symnum.args)
+p5$layers <- p5$layers[-1]
+p5
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "water", measures=c("Shannon")))
+p6 <- p + geom_boxplot(data = p$data, aes(x = water, y = value, fill = water), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = water), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white")) + stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, label = "p.signif", symnum.args = symnum.args)
+p6$layers <- p6$layers[-1]
+p6
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "water", measures=c("Simpson")))
+p7 <- p + geom_boxplot(data = p$data, aes(x = water, y = value, fill = water), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = water), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white")) + stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, label = "p.signif", symnum.args = symnum.args)
+p7$layers <- p7$layers[-1]
+p7
+
+##Beta-ordination##
+#Un-weighted
+library("ape")
+random_tree = rtree(ntaxa(physeq), rooted=TRUE, tip.label=taxa_names(physeq))
+plot(random_tree)
+physeq1 = merge_phyloseq(physeq, META, random_tree)
+ps0.rar.filtered <- core(physeq, detection = 10, prevalence = 0.05)
+summarize_phyloseq(ps0.rar.filtered)
+ordu.unwt.uni <- ordinate(physeq1, "PCoA", "unifrac", weighted=F)
+unwt.unifrac <- plot_ordination(physeq1, ordu.unwt.uni, color="water") 
+unwt.unifrac <- unwt.unifrac + ggtitle("Unweighted UniFrac")
+unwt.unifrac <- unwt.unifrac + theme_bw()
+ord1 <- unwt.unifrac + geom_point(size = 3, alpha = 0.9) + theme_bw(base_size = 20, base_line_size = 1.5) + theme(text = element_text(size = 12, face = "bold"))+ stat_ellipse(aes(group = water), geom="polygon",level=0.8,alpha=0.2) + labs("water") + scale_color_manual(values = c("firebrick", "gold3"), name = "water") + scale_shape_manual(values = c(19, 15), name = "water") + theme(legend.position = "bottom") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+ord1
+#Weighted
+ordu.wt.uni <- ordinate(physeq1, "PCoA", "unifrac", weighted=T)
+wt.unifrac <- plot_ordination(physeq1, ordu.wt.uni, color="water")
+wt.unifrac <- wt.unifrac + ggtitle("Weighted UniFrac") + theme_bw()
+ord2 <- wt.unifrac + geom_point(size = 3, alpha = 0.9) + theme_bw(base_size = 20, base_line_size = 1.5) + theme(text = element_text(size = 12, face = "bold"))+ stat_ellipse(aes(group = water), geom="polygon",level=0.8,alpha=0.2) + labs("water") + scale_color_manual(values = c("firebrick", "gold3"), name = "water") + scale_shape_manual(values = c(19, 15), name = "water") + theme(legend.position = "bottom") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+ord2
+##Arrange plot
+top_row <- plot_grid(p5, p6, p7, labels = c('A', 'B', 'C'), align = 'h', nrow = 1)
+bottom_row <- plot_grid(ord1, ord2, labels = c('D', 'E'), align = 'h', nrow = 1)
+plot_grid(top_row, bottom_row, nrow = 2, rel_heights = c(2.0, 1.5))
+#Save plot
+ggsave("alpha-beta_div_dc_fig.tiff", units = c("in"), width=7.5, height=8.5, dpi=300, compression="lzw")
+
+##Alpha-diversity (crustacean)
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "crustacean", measures=c("Observed")))
+p11 <- p + geom_boxplot(data = p$data, aes(x = crustacean, y = value, fill = crustacean), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = crustacean), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "forestgreen", "royalblue", "chocolate", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+p11$layers <- p11$layers[-1]
+p11
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "crustacean", measures=c("Shannon")))
+p12 <- p + geom_boxplot(data = p$data, aes(x = crustacean, y = value, fill = crustacean), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = crustacean), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "forestgreen", "royalblue", "chocolate", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+p12$layers <- p12$layers[-1]
+p12
+#Alpha-diversity analysis
+(p = plot_richness(ps, x = "crustacean", measures=c("Simpson")))
+p13 <- p + geom_boxplot(data = p$data, aes(x = crustacean, y = value, fill = crustacean), alpha = 0.8, lwd =0.8, outlier.shape = NA) + geom_jitter(aes(fill = crustacean), alpha = 0.6, stroke = 1.0, shape = 21, size = 3.0, position = position_jitterdodge()) + theme_bw(base_size = 12, base_line_size = 1.5) + theme (axis.text.x = element_text(size=12, face = "bold", colour = "black", angle = 45, hjust=1)) + theme (axis.text.y = element_text(size = 12)) + theme(text = element_text(size = 12, face = "bold")) + scale_fill_manual(values = c("firebrick", "forestgreen", "royalblue", "chocolate", "gold3")) + theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+p13$layers <- p13$layers[-1]
+p13
+
+##Beta-ordination (crustacean)##
+library("ape")
+random_tree = rtree(ntaxa(physeq), rooted=TRUE, tip.label=taxa_names(physeq))
+plot(random_tree)
+physeq1 = merge_phyloseq(physeq, META, random_tree)
+ps0.rar.filtered <- core(physeq, detection = 10, prevalence = 0.05)
+summarize_phyloseq(ps0.rar.filtered)
+ordu.unwt.uni <- ordinate(physeq1, "PCoA", "unifrac", weighted=F)
+unwt.unifrac <- plot_ordination(physeq1, ordu.unwt.uni, color="crustacean") 
+unwt.unifrac <- unwt.unifrac + ggtitle("Unweighted UniFrac")
+unwt.unifrac <- unwt.unifrac + theme_bw()
+ord3 <- unwt.unifrac + geom_point(size = 3, alpha = 0.9) + theme_bw(base_size = 20, base_line_size = 1.5) + theme(text = element_text(size = 12, face = "bold"))+ stat_ellipse(aes(group = crustacean), geom="polygon",level=0.8,alpha=0.2) + labs("crustacean") + scale_color_manual(values = c("firebrick", "forestgreen", "royalblue", "chocolate", "gold3"), name = "crustacean") + scale_shape_manual(values = c(19, 15, 17, 23, 25), name = "crustacean") + theme(legend.position = "bottom") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+ord3
+
+library("ape")
+random_tree = rtree(ntaxa(physeq), rooted=TRUE, tip.label=taxa_names(physeq))
+plot(random_tree)
+physeq1 = merge_phyloseq(physeq, META, random_tree)
+ps0.rar.filtered <- core(physeq, detection = 10, prevalence = 0.05)
+summarize_phyloseq(ps0.rar.filtered)
+ordu.wt.uni <- ordinate(physeq1, "PCoA", "unifrac", weighted=T)
+wt.unifrac <- plot_ordination(physeq1, ordu.wt.uni, color="crustacean")
+wt.unifrac <- wt.unifrac + ggtitle("Weighted UniFrac") + theme_bw()
+ord4 <- wt.unifrac + geom_point(size = 3, alpha = 0.9) + theme_bw(base_size = 20, base_line_size = 1.5) + theme(text = element_text(size = 12, face = "bold"))+ stat_ellipse(aes(group = crustacean), geom="polygon",level=0.8,alpha=0.2) + labs("crustacean") + scale_color_manual(values = c("firebrick", "forestgreen", "royalblue", "chocolate", "gold3"), name = "crustacean") + scale_shape_manual(values = c(19, 15, 17, 23, 25), name = "crustacean") + theme(legend.position = "bottom") + theme(panel.background = element_rect(fill = "white"), plot.background = element_rect(fill = "transparent", color = NA), panel.grid.major = element_blank(), panel.grid.minor = element_line(colour = "white"))
+ord4
+
+#Arrange plots
+top_row <- plot_grid(p11, p12, p13, labels = c('A', 'B', 'C'), align = 'h', nrow = 1)
+bottom_row <- plot_grid(ord3, ord4, labels = c('D', 'E'), align = 'h', nrow = 1)
+plot_grid(top_row, bottom_row, nrow = 2, rel_heights = c(2.0, 1.5))
+#Save plot
+ggsave("alpha-beta_div_dc_fig2.tiff", units = c("in"), width=7.5, height=8.5, dpi=300, compression="lzw")
+
+
+####Archaea in the decapod crustacean's gut####
+p <- subset_taxa(ps, Kingdom  %in% c("Archaea")) 
+ps_arch <- p %>%
+  tax_glom(taxrank = "Genus") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance (or use ps0.ra)
+  psmelt()                                     # Melt to long format for easy ggploting
+
+dat.agr = aggregate(Abundance~water+crustacean+Genus, data=ps_arch, FUN=mean)
+
+gp2 <- ggplot(dat.agr, aes(x = crustacean, y = Abundance, fill = Genus)) +
+  facet_wrap(~ water, scales = "free") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill="white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.spacing =
+          unit(0.1, "lines")) +
+  theme(strip.text = element_text(colour = 'black'), axis.text.x = element_text(angle = 45, hjust = 1, size=12, face="bold", colour="black"), axis.text.y =
+          element_text(hjust = 1, size=12), axis.title.x = element_text(angle = 0, hjust = 0.5, vjust=0.5, size=12, face="bold", margin = margin(t = 6, r = 4, b = 0, l = 0)), axis.title.y = element_text(angle = 90, hjust = 0.4, size=12, face="bold", margin = margin(t = 0, r = 6, b = 0, l = 0)), plot.title
+        =element_text(angle = 0, hjust = 0, size=10, face="bold", margin = margin(t = 0, r = 0, b = 8, l = 0)) ) +
+  geom_bar(stat = "identity", position="fill", colour = "black") +
+  scale_fill_manual(values = g_col) +
+  theme(legend.text=element_text(size=12, face = "italic"), legend.title = element_text(size=12, face="bold")) + 
+  scale_y_continuous(label = scales::percent) +
+  ylab("Relative Abundance") + theme(axis.title.x=element_blank()) + ggtitle ("Archaea in the gut")
+gp2
+
+#Save plot
+ggsave("archaea_com_dc_fig.tiff", units = c("in"), width=12, height=7.5, dpi=300, compression="lzw")
+
